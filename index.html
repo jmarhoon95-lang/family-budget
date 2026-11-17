@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Family Available Budget (BHD)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 650px; margin: 20px auto; padding: 0 16px; background: #f8fafc; color: #0f172a; }
+    .header-card { background: white; padding: 20px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; }
+    .refresh-btn { background: #e2e8f0; color: #0f172a; border: none; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .refresh-btn:active { background: #cbd5e1; }
+    .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; text-align: center; }
+    .total-box { background: #f1f5f9; padding: 12px 8px; border-radius: 10px; }
+    .total-label { font-size: 12px; color: #64748b; }
+    .total-val { font-size: 1.15em; font-weight: 700; margin-top: 4px; }
+    .cat-card { background: white; padding: 16px 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 12px; }
+    .cat-top { display: flex; justify-content: space-between; align-items: baseline; }
+    .cat-name { font-weight: 700; font-size: 16px; }
+    .cat-rem { font-weight: 700; font-size: 16px; }
+    .cat-sub { display: flex; justify-content: space-between; font-size: 13px; color: #64748b; margin-top: 4px; }
+    .bar-bg { background: #e2e8f0; height: 10px; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    .bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
+    .note { font-size: 12px; color: #64748b; margin-top: 8px; }
+    #status { font-size: 12px; color: #64748b; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <div class="header-card">
+    <div class="header-top">
+      <h2 style="margin:0;">Family Available Budget</h2>
+      <button class="refresh-btn" onclick="loadBudget()">↻ Refresh</button>
+    </div>
+    <div id="status">Updating from Google Sheets...</div>
+    <div class="totals">
+      <div class="total-box">
+        <div class="total-label">Total Budget</div>
+        <div class="total-val" id="totBudget">0.000</div>
+      </div>
+      <div class="total-box">
+        <div class="total-label">Total Spent</div>
+        <div class="total-val" id="totSpent" style="color:#dc2626;">0.000</div>
+      </div>
+      <div class="total-box">
+        <div class="total-label">Available Left</div>
+        <div class="total-val" id="totLeft" style="color:#16a34a;">0.000</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="categoriesList"></div>
+
+  <script>
+    const SHEET_ID = "1dUrsIAW8fYUvzJ_z-7RulRSW3V3-vdbf0oWMMAiZZ_k";
+
+    function loadBudget() {
+      document.getElementById("status").innerText = "Updating from Google Sheets...";
+
+      const oldScript = document.getElementById("gsheet-jsonp");
+      if (oldScript) oldScript.remove();
+
+      const script = document.createElement("script");
+      script.id = "gsheet-jsonp";
+      script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?gid=0&tqx=out:json;responseHandler:handleSheetData&t=${Date.now()}`;
+      script.onerror = function() {
+        document.getElementById("status").innerText = "Blocked or offline. Make sure the sheet is shared as 'Anyone with the link' and open in Safari/Chrome.";
+      };
+      document.body.appendChild(script);
+    }
+
+    function handleSheetData(response) {
+      try {
+        if (response.status === "error") {
+          throw new Error(response.errors?.[0]?.detailed_message || "Sheet access denied");
+        }
+
+        const rows = response.table.rows || [];
+        let totalBudget = 0;
+        let totalSpent = 0;
+        const container = document.getElementById("categoriesList");
+        container.innerHTML = "";
+
+        rows.forEach(r => {
+          const cells = r.c || [];
+          const category = cells[0] && cells[0].v !== null ? String(cells[0].v).trim() : "";
+          if (!category || category.toLowerCase() === "category") return;
+
+          const budget = cells[1] && typeof cells[1].v === "number" ? cells[1].v : (parseFloat(cells[1]?.v) || 0);
+          const spent = cells[2] && typeof cells[2].v === "number" ? cells[2].v : (parseFloat(cells[2]?.v) || 0);
+          const notes = cells[3] && cells[3].v !== null ? String(cells[3].v).trim() : "";
+          const left = (cells[4] && typeof cells[4].v === "number") ? cells[4].v : (budget - spent);
+
+          totalBudget += budget;
+          totalSpent += spent;
+
+          const pct = budget > 0 ? Math.min(100, Math.max(0, (spent / budget) * 100)) : 0;
+          let barColor = "#16a34a";
+          if (pct >= 90 || left < 0) barColor = "#dc2626";
+          else if (pct >= 70) barColor = "#f59e0b";
+
+          const card = document.createElement("div");
+          card.className = "cat-card";
+          card.innerHTML = `
+            <div class="cat-top">
+              <span class="cat-name">${category}</span>
+              <span class="cat-rem" style="color:${left < 0 ? '#dc2626' : '#16a34a'}">
+                ${left.toFixed(3)} BHD left
+              </span>
+            </div>
+            <div class="cat-sub">
+              <span>Spent: ${spent.toFixed(3)} BHD</span>
+              <span>Budget: ${budget.toFixed(3)} BHD</span>
+            </div>
+            <div class="bar-bg">
+              <div class="bar-fill" style="width:${pct}%; background:${barColor};"></div>
+            </div>
+            ${notes ? `<div class="note" dir="auto">${notes}</div>` : ""}
+          `;
+          container.appendChild(card);
+        });
+
+        const totalLeft = totalBudget - totalSpent;
+        document.getElementById("totBudget").innerText = totalBudget.toFixed(3);
+        document.getElementById("totSpent").innerText = totalSpent.toFixed(3);
+        const leftEl = document.getElementById("totLeft");
+        leftEl.innerText = totalLeft.toFixed(3);
+        leftEl.style.color = totalLeft < 0 ? "#dc2626" : "#16a34a";
+
+        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById("status").innerText = "Updated at " + now + " • Currency: BHD";
+      } catch (err) {
+        document.getElementById("status").innerText = "Error: " + err.message;
+      }
+    }
+
+    window.onload = loadBudget;
+  </script>
+</body>
+</html>
