@@ -14,6 +14,12 @@
     .total-box { background: #f1f5f9; padding: 12px 8px; border-radius: 10px; }
     .total-label { font-size: 12px; color: #64748b; }
     .total-val { font-size: 1.15em; font-weight: 700; margin-top: 4px; }
+    
+    /* Cycle Progress Summary Pill */
+    .cycle-info { margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #475569; }
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: #0f172a; }
+    .legend-tick { width: 3px; height: 14px; background: #0f172a; border-radius: 2px; display: inline-block; }
+
     .section-title { font-size: 15px; font-weight: 700; color: #334155; margin: 20px 0 10px 4px; display: flex; justify-content: space-between; align-items: center; }
     .cat-card { background: white; padding: 16px 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 12px; }
     .saving-card { border-left: 4px solid #2563eb; }
@@ -21,9 +27,24 @@
     .cat-name { font-weight: 700; font-size: 16px; }
     .cat-rem { font-weight: 700; font-size: 16px; white-space: nowrap; }
     .cat-sub { display: flex; justify-content: space-between; font-size: 13px; color: #64748b; margin-top: 4px; }
-    .bar-bg { background: #e2e8f0; height: 10px; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    
+    /* Progress Bar + Day Marker Line */
+    .bar-wrapper { position: relative; margin-top: 12px; padding: 3px 0; }
+    .bar-bg { background: #e2e8f0; height: 10px; border-radius: 999px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
-    .note { font-size: 12px; color: #64748b; margin-top: 6px; }
+    .day-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: #0f172a;
+      border-radius: 2px;
+      transform: translateX(-50%);
+      box-shadow: 0 0 0 1.5px white;
+      z-index: 2;
+    }
+
+    .note { font-size: 12px; color: #64748b; margin-top: 8px; }
     #status { font-size: 12px; color: #64748b; margin-top: 6px; }
   </style>
 </head>
@@ -49,6 +70,10 @@
         <div class="total-val" id="totLeft" style="color:#16a34a;">0.000</div>
       </div>
     </div>
+    <div class="cycle-info">
+      <span id="cycleText">Calculating month cycle...</span>
+      <span class="legend-item"><span class="legend-tick"></span> Today</span>
+    </div>
   </div>
 
   <div class="section-title">Monthly Categories</div>
@@ -64,9 +89,32 @@
 
   <script>
     const SHEET_ID = "1dUrsIAW8fYUvzJ_z-7RulRSW3V3-vdbf0oWMMAiZZ_k";
+    const CYCLE_START_DAY = 26;
     let loadTimer = null;
 
-    // Register Google's default gviz JSONP callback
+    // Calculate exact position in the 26th-to-25th billing/salary cycle
+    function getCycleProgress() {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      let cycleStart, cycleEnd;
+      if (today.getDate() >= CYCLE_START_DAY) {
+        cycleStart = new Date(today.getFullYear(), today.getMonth(), CYCLE_START_DAY);
+        cycleEnd = new Date(today.getFullYear(), today.getMonth() + 1, CYCLE_START_DAY);
+      } else {
+        cycleStart = new Date(today.getFullYear(), today.getMonth() - 1, CYCLE_START_DAY);
+        cycleEnd = new Date(today.getFullYear(), today.getMonth(), CYCLE_START_DAY);
+      }
+
+      const msPerDay = 1000 * 60 * 60 * 24;
+      const totalDays = Math.round((cycleEnd - cycleStart) / msPerDay);
+      const elapsedDays = Math.round((today - cycleStart) / msPerDay) + 1; // Day 1 on the 26th
+      const daysLeft = Math.max(0, totalDays - elapsedDays);
+      const pct = Math.min(100, Math.max(0, (elapsedDays / totalDays) * 100));
+
+      return { elapsedDays, totalDays, daysLeft, pct };
+    }
+
     window.google = window.google || {};
     window.google.visualization = window.google.visualization || {};
     window.google.visualization.Query = {
@@ -80,6 +128,11 @@
       const statusEl = document.getElementById("status");
       statusEl.style.color = "#64748b";
       statusEl.innerText = "Updating from Google Sheets...";
+
+      // Update cycle text immediately
+      const cycle = getCycleProgress();
+      document.getElementById("cycleText").innerText =
+        `Day ${cycle.elapsedDays} of ${cycle.totalDays} (${cycle.daysLeft} days left • ${Math.round(cycle.pct)}%)`;
 
       const oldScript = document.getElementById("gsheet-jsonp");
       if (oldScript) oldScript.remove();
@@ -108,6 +161,7 @@
           throw new Error(response.errors?.[0]?.detailed_message || "Sheet access denied");
         }
 
+        const cycle = getCycleProgress();
         const rows = response.table.rows || [];
         let monthlyBudget = 0;
         let monthlySpent = 0;
@@ -171,8 +225,11 @@
                 <span>Spent: ${spent.toFixed(3)} BHD</span>
                 <span>Budget: ${budget.toFixed(3)} BHD</span>
               </div>
-              <div class="bar-bg">
-                <div class="bar-fill" style="width:${pct}%; background:${barColor};"></div>
+              <div class="bar-wrapper">
+                <div class="bar-bg">
+                  <div class="bar-fill" style="width:${pct}%; background:${barColor};"></div>
+                </div>
+                <div class="day-marker" style="left:${cycle.pct}%;" title="Day ${cycle.elapsedDays} of ${cycle.totalDays}"></div>
               </div>
               ${notes ? `<div class="note" dir="auto">${notes}</div>` : ""}
             `;
