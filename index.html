@@ -7,9 +7,11 @@
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; max-width: 650px; margin: 20px auto; padding: 0 16px; background: #f8fafc; color: #0f172a; }
     .header-card { background: white; padding: 20px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
-    .header-top { display: flex; justify-content: space-between; align-items: center; }
-    .refresh-btn { background: #e2e8f0; color: #0f172a; border: none; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .refresh-btn:active { background: #cbd5e1; }
+    .header-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .btn-group { display: flex; gap: 8px; align-items: center; }
+    .btn { background: #e2e8f0; color: #0f172a; border: none; padding: 7px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn:active { opacity: 0.85; }
+    .btn-active { background: #0f172a; color: #ffffff; }
     .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; text-align: center; }
     .total-box { background: #f1f5f9; padding: 12px 8px; border-radius: 10px; }
     .total-label { font-size: 12px; color: #64748b; }
@@ -25,7 +27,7 @@
     .saving-card { border-left: 4px solid #2563eb; }
     .cat-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .cat-name { font-weight: 700; font-size: 16px; }
-    .cat-rem { font-weight: 700; font-size: 16px; white-space: nowrap; }
+    .cat-rem { font-weight: 700; font-size: 15px; white-space: nowrap; }
     .cat-sub { display: flex; justify-content: space-between; font-size: 13px; color: #64748b; margin-top: 4px; }
     
     /* Progress Bar + Day Marker Line */
@@ -53,12 +55,15 @@
   <div class="header-card">
     <div class="header-top">
       <h2 style="margin:0;">Monthly Budget Summary</h2>
-      <button class="refresh-btn" onclick="loadBudget()">↻ Refresh</button>
+      <div class="btn-group">
+        <button id="paceToggleBtn" class="btn" onclick="togglePaceMode()">Today's Pace</button>
+        <button class="btn" onclick="loadBudget()">↻ Refresh</button>
+      </div>
     </div>
     <div id="status">Updating from Google Sheets...</div>
     <div class="totals">
       <div class="total-box">
-        <div class="total-label">Monthly Budget</div>
+        <div class="total-label" id="lblBudget">Monthly Budget</div>
         <div class="total-val" id="totBudget">0.000</div>
       </div>
       <div class="total-box">
@@ -66,7 +71,7 @@
         <div class="total-val" id="totSpent" style="color:#dc2626;">0.000</div>
       </div>
       <div class="total-box">
-        <div class="total-label">Available Left</div>
+        <div class="total-label" id="lblLeft">Available Left</div>
         <div class="total-val" id="totLeft" style="color:#16a34a;">0.000</div>
       </div>
     </div>
@@ -91,8 +96,9 @@
     const SHEET_ID = "1dUrsIAW8fYUvzJ_z-7RulRSW3V3-vdbf0oWMMAiZZ_k";
     const CYCLE_START_DAY = 26;
     let loadTimer = null;
+    let isPaceMode = false;
+    let parsedItems = [];
 
-    // Calculate exact position in the 26th-to-25th billing/salary cycle
     function getCycleProgress() {
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -108,11 +114,24 @@
 
       const msPerDay = 1000 * 60 * 60 * 24;
       const totalDays = Math.round((cycleEnd - cycleStart) / msPerDay);
-      const elapsedDays = Math.round((today - cycleStart) / msPerDay) + 1; // Day 1 on the 26th
+      const elapsedDays = Math.round((today - cycleStart) / msPerDay) + 1;
       const daysLeft = Math.max(0, totalDays - elapsedDays);
       const pct = Math.min(100, Math.max(0, (elapsedDays / totalDays) * 100));
 
       return { elapsedDays, totalDays, daysLeft, pct };
+    }
+
+    function togglePaceMode() {
+      isPaceMode = !isPaceMode;
+      const btn = document.getElementById("paceToggleBtn");
+      if (isPaceMode) {
+        btn.classList.add("btn-active");
+        btn.innerText = "Showing: Today's Pace";
+      } else {
+        btn.classList.remove("btn-active");
+        btn.innerText = "Today's Pace";
+      }
+      renderAll();
     }
 
     window.google = window.google || {};
@@ -129,7 +148,6 @@
       statusEl.style.color = "#64748b";
       statusEl.innerText = "Updating from Google Sheets...";
 
-      // Update cycle text immediately
       const cycle = getCycleProgress();
       document.getElementById("cycleText").innerText =
         `Day ${cycle.elapsedDays} of ${cycle.totalDays} (${cycle.daysLeft} days left • ${Math.round(cycle.pct)}%)`;
@@ -161,17 +179,8 @@
           throw new Error(response.errors?.[0]?.detailed_message || "Sheet access denied");
         }
 
-        const cycle = getCycleProgress();
         const rows = response.table.rows || [];
-        let monthlyBudget = 0;
-        let monthlySpent = 0;
-        let totalSavingsBalance = 0;
-        let hasSavings = false;
-
-        const monthlyContainer = document.getElementById("monthlyList");
-        const savingsContainer = document.getElementById("savingsList");
-        monthlyContainer.innerHTML = "";
-        savingsContainer.innerHTML = "";
+        parsedItems = [];
 
         rows.forEach(r => {
           const cells = r.c || [];
@@ -183,74 +192,12 @@
           const notes = cells[3] && cells[3].v !== null ? String(cells[3].v).trim() : "";
           const left = (cells[4] && typeof cells[4].v === "number") ? cells[4].v : (budget - spent);
           const type = cells[5] && cells[5].v !== null ? String(cells[5].v).trim().toLowerCase() : "monthly";
-
           const isSaving = type.includes("saving") || type.includes("sinking") || type.includes("emergency");
 
-          if (isSaving) {
-            hasSavings = true;
-            const balance = (cells[4] && typeof cells[4].v === "number") ? cells[4].v : budget;
-            totalSavingsBalance += balance;
-
-            const card = document.createElement("div");
-            card.className = "cat-card saving-card";
-            card.innerHTML = `
-              <div class="cat-top">
-                <span class="cat-name" dir="auto">${category}</span>
-                <span class="cat-rem" style="color:#2563eb;">
-                  ${balance.toFixed(3)} BHD
-                </span>
-              </div>
-              ${notes ? `<div class="note" dir="auto">${notes}</div>` : ""}
-            `;
-            savingsContainer.appendChild(card);
-          } else {
-            monthlyBudget += budget;
-            monthlySpent += spent;
-
-            const pct = budget > 0 ? Math.min(100, Math.max(0, (spent / budget) * 100)) : 0;
-            let barColor = "#16a34a";
-            if (pct >= 90 || left < 0) barColor = "#dc2626";
-            else if (pct >= 70) barColor = "#f59e0b";
-
-            const card = document.createElement("div");
-            card.className = "cat-card";
-            card.innerHTML = `
-              <div class="cat-top">
-                <span class="cat-name" dir="auto">${category}</span>
-                <span class="cat-rem" style="color:${left < 0 ? '#dc2626' : '#16a34a'}">
-                  ${left.toFixed(3)} BHD left
-                </span>
-              </div>
-              <div class="cat-sub">
-                <span>Spent: ${spent.toFixed(3)} BHD</span>
-                <span>Budget: ${budget.toFixed(3)} BHD</span>
-              </div>
-              <div class="bar-wrapper">
-                <div class="bar-bg">
-                  <div class="bar-fill" style="width:${pct}%; background:${barColor};"></div>
-                </div>
-                <div class="day-marker" style="left:${cycle.pct}%;" title="Day ${cycle.elapsedDays} of ${cycle.totalDays}"></div>
-              </div>
-              ${notes ? `<div class="note" dir="auto">${notes}</div>` : ""}
-            `;
-            monthlyContainer.appendChild(card);
-          }
+          parsedItems.push({ category, budget, spent, notes, left, isSaving });
         });
 
-        const monthlyLeft = monthlyBudget - monthlySpent;
-        document.getElementById("totBudget").innerText = monthlyBudget.toFixed(3);
-        document.getElementById("totSpent").innerText = monthlySpent.toFixed(3);
-        const leftEl = document.getElementById("totLeft");
-        leftEl.innerText = monthlyLeft.toFixed(3);
-        leftEl.style.color = monthlyLeft < 0 ? "#dc2626" : "#16a34a";
-
-        const savingsSection = document.getElementById("savingsSection");
-        if (hasSavings) {
-          savingsSection.style.display = "block";
-          document.getElementById("totalSavingsLabel").innerText = `Total Balance: ${totalSavingsBalance.toFixed(3)} BHD`;
-        } else {
-          savingsSection.style.display = "none";
-        }
+        renderAll();
 
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         statusEl.style.color = "#64748b";
@@ -258,6 +205,128 @@
       } catch (err) {
         statusEl.style.color = "#dc2626";
         statusEl.innerText = "Error: " + err.message;
+      }
+    }
+
+    function renderAll() {
+      const cycle = getCycleProgress();
+      const dayRatio = cycle.elapsedDays / cycle.totalDays;
+
+      let monthlyBudget = 0;
+      let monthlySpent = 0;
+      let totalSavingsBalance = 0;
+      let hasSavings = false;
+
+      const monthlyContainer = document.getElementById("monthlyList");
+      const savingsContainer = document.getElementById("savingsList");
+      monthlyContainer.innerHTML = "";
+      savingsContainer.innerHTML = "";
+
+      parsedItems.forEach(item => {
+        if (item.isSaving) {
+          hasSavings = true;
+          const balance = item.left;
+          totalSavingsBalance += balance;
+
+          const card = document.createElement("div");
+          card.className = "cat-card saving-card";
+          card.innerHTML = `
+            <div class="cat-top">
+              <span class="cat-name" dir="auto">${item.category}</span>
+              <span class="cat-rem" style="color:#2563eb;">
+                ${balance.toFixed(3)} BHD
+              </span>
+            </div>
+            ${item.notes ? `<div class="note" dir="auto">${item.notes}</div>` : ""}
+          `;
+          savingsContainer.appendChild(card);
+        } else {
+          monthlyBudget += item.budget;
+          monthlySpent += item.spent;
+
+          const pct = item.budget > 0 ? Math.min(100, Math.max(0, (item.spent / item.budget) * 100)) : 0;
+          let barColor = "#16a34a";
+          if (pct >= 90 || item.left < 0) barColor = "#dc2626";
+          else if (pct >= 70) barColor = "#f59e0b";
+
+          let rightLabelHtml = "";
+          let subRightText = `Budget: ${item.budget.toFixed(3)} BHD`;
+
+          if (isPaceMode) {
+            const todayBudget = item.budget * dayRatio;
+            const paceDiff = todayBudget - item.spent; // positive = under pace, negative = over pace
+            if (paceDiff >= 0) {
+              rightLabelHtml = `<span class="cat-rem" style="color:#16a34a;">+${paceDiff.toFixed(3)} BHD under pace</span>`;
+            } else {
+              rightLabelHtml = `<span class="cat-rem" style="color:#dc2626;">-${Math.abs(paceDiff).toFixed(3)} BHD over pace</span>`;
+            }
+            subRightText = `Today's Budget: ${todayBudget.toFixed(3)} BHD`;
+          } else {
+            rightLabelHtml = `
+              <span class="cat-rem" style="color:${item.left < 0 ? '#dc2626' : '#16a34a'}">
+                ${item.left.toFixed(3)} BHD left
+              </span>`;
+          }
+
+          const card = document.createElement("div");
+          card.className = "cat-card";
+          card.innerHTML = `
+            <div class="cat-top">
+              <span class="cat-name" dir="auto">${item.category}</span>
+              ${rightLabelHtml}
+            </div>
+            <div class="cat-sub">
+              <span>Spent: ${item.spent.toFixed(3)} BHD</span>
+              <span>${subRightText}</span>
+            </div>
+            <div class="bar-wrapper">
+              <div class="bar-bg">
+                <div class="bar-fill" style="width:${pct}%; background:${barColor};"></div>
+              </div>
+              <div class="day-marker" style="left:${cycle.pct}%;" title="Day ${cycle.elapsedDays} of ${cycle.totalDays}"></div>
+            </div>
+            ${item.notes ? `<div class="note" dir="auto">${item.notes}</div>` : ""}
+          `;
+          monthlyContainer.appendChild(card);
+        }
+      });
+
+      // Update Top Summary Cards
+      document.getElementById("totSpent").innerText = monthlySpent.toFixed(3);
+      const leftEl = document.getElementById("totLeft");
+
+      if (isPaceMode) {
+        const totalTodayBudget = monthlyBudget * dayRatio;
+        const totalPaceDiff = totalTodayBudget - monthlySpent;
+
+        document.getElementById("lblBudget").innerText = "Today's Budget";
+        document.getElementById("totBudget").innerText = totalTodayBudget.toFixed(3);
+        document.getElementById("lblLeft").innerText = "Pace Status";
+
+        if (totalPaceDiff >= 0) {
+          leftEl.innerText = `+${totalPaceDiff.toFixed(3)} under`;
+          leftEl.style.color = "#16a34a";
+        } else {
+          leftEl.innerText = `-${Math.abs(totalPaceDiff).toFixed(3)} over`;
+          leftEl.style.color = "#dc2626";
+        }
+      } else {
+        const monthlyLeft = monthlyBudget - monthlySpent;
+        document.getElementById("lblBudget").innerText = "Monthly Budget";
+        document.getElementById("totBudget").innerText = monthlyBudget.toFixed(3);
+        document.getElementById("lblLeft").innerText = "Available Left";
+
+        leftEl.innerText = monthlyLeft.toFixed(3);
+        leftEl.style.color = monthlyLeft < 0 ? "#dc2626" : "#16a34a";
+      }
+
+      // Show/Hide Saving Accounts Section
+      const savingsSection = document.getElementById("savingsSection");
+      if (hasSavings) {
+        savingsSection.style.display = "block";
+        document.getElementById("totalSavingsLabel").innerText = `Total Balance: ${totalSavingsBalance.toFixed(3)} BHD`;
+      } else {
+        savingsSection.style.display = "none";
       }
     }
 
